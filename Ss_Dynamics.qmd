@@ -1,0 +1,167 @@
+---
+title: "Ss_Dynamics"
+format: html
+editor: visual
+---
+
+```{r}
+# Load required library
+library(readxl)
+library(dplyr)
+library(tidyr)
+
+#loading data
+rawdata <- read_excel("fig4D_rawdata.xlsx")
+head(rawdata)
+
+# Replicate rows according to Counts
+expanded_data <- rawdata %>%
+  uncount(Counts)  # Expands rows according to 'Counts'
+
+# vectorize datasets
+# For WT off state
+wt_off_expand <- expanded_data %>%
+  filter(State == "off", Genotype == "WT") %>%
+  pull(Duration)
+
+# For Sna off state
+sna_off_expand <- expanded_data %>%
+  filter(State == "off", Genotype == "Sna") %>%
+  pull(Duration)
+
+head(sna_off_expand)
+tail(sna_off_expand)
+```
+
+Disperson Test
+
+```{r}
+# Pass in a vector to test.CV()
+
+calc.CV<-function(dat){
+   return(sd(dat)/mean(dat))
+}
+
+test.CV<-function(dat,dist.tail=1){
+   # dist.tail=1 for overdispersed, 0 for two-tailed test, -1 for underdispersed
+   real.m=mean(dat)
+   real.CV=calc.CV(dat)
+   resolution=10000 # how many simulated datapoints in the null distribution
+ 
+exp.null.dist.CV=replicate(resolution,calc.CV(rexp(length(dat),rate=1/real.m)))
+   over.p=sum(real.CV<=exp.null.dist.CV)/resolution
+   under.p=sum(real.CV>=exp.null.dist.CV)/resolution
+   if (dist.tail==1){
+     test.type='overdispersed'
+     pval=over.p
+   } else if (dist.tail==-1){
+     pval=under.p
+     test.type='underdispersed'
+   } else {# two-tailed
+     if (real.CV>1){
+       pval=over.p
+       pval=pval+sum(1/real.CV>=exp.null.dist.CV)/resolution
+     } else {
+         pval=under.p
+         pval=pval+sum(1/real.CV<=exp.null.dist.CV)/resolution
+       }
+     test.type='two-tailed'
+   }
+   result=list(real.CV=real.CV,p.value=pval,test.type=test.type)
+   return(result)
+}
+
+```
+
+```{r}
+# Apply the function to datasets
+
+wt_off_CV_test <- test.CV(wt_off_expand, dist.tail = 0)  # Two-tailed test for WT Off
+sna_off_CV_test <- test.CV(sna_off_expand, dist.tail = 0)  # Two-tailed test for Sna Off
+
+# Print the results
+cat("\nWT Off Test:\n")
+print(wt_off_CV_test)
+
+cat("\nSna Off Test:\n")
+print(sna_off_CV_test)
+```
+
+Skewness Test
+
+```{r}
+
+# This requires the moments package for the skewness function.
+# This code checks if it is installed and either loads it or installs and loads it
+packages = c('moments')
+
+## Now load or install&load all
+package.check <- lapply(
+  packages,
+  FUN = function(x) {
+    if (!require(x, character.only = TRUE)) {
+      install.packages(x, dependencies = TRUE)
+      suppressMessages(library(x, character.only = TRUE))
+    }
+  }
+)
+############# End load and check package
+
+
+# This compares two distributions and asks whether one has more positive skew than the other
+# The test statistic is the difference in skewness
+
+  test.skewness.diff<-function(d.vect,i.vect){
+    #function to get the different in skewness
+    # d.vect is the data itself
+    # i.vect is the index (1 or 2: which datapoint goes with which dataset)
+    sk1=skewness(d.vect[i.vect==1])
+    sk2=skewness(d.vect[i.vect==2])
+    return(sk1-sk2)
+  }
+  compare.skewness<-function(dat1,dat2,dist.tail=1,scaleThem=F){
+    # dist.tail=1 means test whether dat1 has a longer right tail than dat2
+    # dist.tail=-1 is the opposite
+    #dist.tail=0 is a 2-tailed test
+    
+    # If scaleThem==T then normalize the dat2 data to have the same mean and sd as dat1
+    
+    if (scaleThem){
+      dat2=(dat2-mean(dat2))+mean(dat1)
+      dat2=(dat2/sd(dat2))*sd(dat1)
+    }
+    n1=length(dat1)
+    n2=length(dat2)
+    all.dat=c(dat1,dat2)
+    index.dat=c(rep(1,n1),rep(2,n2))
+    real.stat.diff=test.skewness.diff(all.dat,index.dat)
+    resolution=10000
+    null.dist.stat.diff=replicate(resolution,test.skewness.diff(all.dat,sample(index.dat,length(index.dat),replace=F)))
+    sk1.gt.sk2=sum(real.stat.diff<=null.dist.stat.diff)/resolution
+    sk1.lt.sk2=sum(real.stat.diff>=null.dist.stat.diff)/resolution
+    if (dist.tail==1){
+      test.type='testing whether dat1 has longer right tail than dat2'
+      pval=sk1.gt.sk2
+    } else if (dist.tail==-1){
+      pval=sk1.lt.sk2
+      test.type='testing whether dat1 has longer left tail than dat2'
+    } else {# two-tailed
+      if (real.stat.diff>=0){
+        pval=sk1.gt.sk2+sum((-real.stat.diff)>=null.dist.stat.diff)/resolution
+      } else {
+        pval=sk1.lt.sk2+sum((-real.stat.diff)<=null.dist.stat.diff)/resolution
+      }
+      test.type='two-tailed'
+    }
+    result=list(real.skew.diff=real.stat.diff,p.value=pval,test.type=test.type)
+    return(result)
+  }
+```
+
+```{r}
+# Compare skewness for the "off" state
+off_skew_test <- compare.skewness(sna_off_expand, wt_off_expand, dist.tail = 1)
+cat("\nSkewness Comparison for 'Off' State (Sna vs WT):\n")
+print(off_skew_test)
+
+```
