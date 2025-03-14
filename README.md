@@ -3,13 +3,14 @@ Repository for code used in data analysis for Fig.4D. Huge thanks to Scott Rifki
 
 
 test.skewness.diff
-# This compares two distributions and asks whether one has more positive skew than the other
-# The test statistic is the difference in skewness
-# The null hypothesis is that the distributions the same and so the difference in skewness is 0
-# So the null distribution is constructed by randomizing which datapoint belongs to which distribution.  Then taking the test statistic for this randomized dataset.  Then do this 10000 (resolution) times to get a null distribution 
+#This compares two distributions and asks whether one has more positive skew than the other
+#The test statistic is the difference in skewness
+#The null hypothesis is that the distributions the same and so the difference in skewness is 0
+#So the null distribution is constructed by randomizing which datapoint belongs to which distribution.  Then taking the test statistic for this randomized dataset.  Then do this 10000 (resolution) times to get a null distribution 
 
 
 #-------------------
+
 #If spineless transcription is a Poisson process in the cell (memoryless), then the waiting times until a state change are exponentially distributed. We only observe the state at defined discrete intervals (1-minute) so the appropriate distribution for modeling is geometric.
 
 #Consider changing state a "success". Then the number of minutes in the same state is the number of "failures" until a success. This is a standard setup for a geometric distribution.
@@ -45,14 +46,5 @@ PostPredCheck
 
 postPredDiscrepancyCheck_bayesian-p-value.Rdata
 #This is the set of simulated data generated and used for calculating the Bayesian p-values with the datasets.
-=======
-# test.CV
-This tests whether the data is overdispersed (or underdispersed or either) relative to an exponential distribution
-The test compares the coefficient of variation (CV=stdev/mean) of your data to that of simulated exponential distributions with the same exponential (rate) parameter
 
-# test.skewness.diff
-This compares two distributions and asks whether one has more positive skew than the other
-The test statistic is the difference in skewness
-The null hypothesis is that the distributions the same and so the difference in skewness is 0
-So the null distribution is constructed by randomizing which datapoint belongs to which distribution.  Then taking the test statistic for this randomized dataset.  Then do this 10000 (resolution) times to get a null distribution 
 
