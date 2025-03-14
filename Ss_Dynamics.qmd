@@ -4,19 +4,38 @@ format: html
 editor: visual
 ---
 
-```{r}
-# Load required library
-library(readxl)
-library(dplyr)
-library(tidyr)
+```{r load_packages}
+packages = c('plyr','tibble',"dplyr","magrittr","readr","tidyr","stringr","readxl",'ggplot2','conflicted','cowplot','HDInterval','moments','purrr')
 
-#loading data
-rawdata <- read_excel("fig4D_rawdata.xlsx")
-head(rawdata)
+## Now load or install&load all
+package.check = lapply(
+  packages,
+  FUN = function(x) {
+    if (!require(x, character.only = TRUE)) {
+      if (x=='cmdstanr'){
+        # 
+        install.packages("cmdstanr", repos = c('https://urldefense.com/v3/__https://stan-dev.r-universe.dev__;!!Mih3wA!DBLpmwaGO3SljQ7dXNaIKbEDSu6TGEcR_kUQelyDxxZu1SBJSTvFIGdUp-__3pVzQzmWaFxlbFRZE4nmiaW7$ ', getOption("repos")))
+      } else {
+        install.packages(x, dependencies = TRUE)
+      }      
+      suppressMessages(library(x, character.only = TRUE))
+    }
+  }
+)
+conflict_prefer_all('dplyr',quiet=T)
+
+#cmdstanr has been giving me trouble if loaded in other ways
+library(cmdstanr)
+
+
+```
+
+```{r loading_data}
+dat=read_xlsx('fig4D_countsdata.xlsx') 
+raw.dat=dat %>% uncount(weights = Counts)
 
 # Replicate rows according to Counts
-expanded_data <- rawdata %>%
-  uncount(Counts)  # Expands rows according to 'Counts'
+expanded_data <- raw.dat 
 
 # vectorize datasets
 # For WT off state
@@ -28,63 +47,6 @@ wt_off_expand <- expanded_data %>%
 sna_off_expand <- expanded_data %>%
   filter(State == "off", Genotype == "Sna") %>%
   pull(Duration)
-
-head(sna_off_expand)
-tail(sna_off_expand)
-```
-
-Disperson Test
-
-```{r}
-# Pass in a vector to test.CV()
-
-calc.CV<-function(dat){
-   return(sd(dat)/mean(dat))
-}
-
-test.CV<-function(dat,dist.tail=1){
-   # dist.tail=1 for overdispersed, 0 for two-tailed test, -1 for underdispersed
-   real.m=mean(dat)
-   real.CV=calc.CV(dat)
-   resolution=10000 # how many simulated datapoints in the null distribution
- 
-exp.null.dist.CV=replicate(resolution,calc.CV(rexp(length(dat),rate=1/real.m)))
-   over.p=sum(real.CV<=exp.null.dist.CV)/resolution
-   under.p=sum(real.CV>=exp.null.dist.CV)/resolution
-   if (dist.tail==1){
-     test.type='overdispersed'
-     pval=over.p
-   } else if (dist.tail==-1){
-     pval=under.p
-     test.type='underdispersed'
-   } else {# two-tailed
-     if (real.CV>1){
-       pval=over.p
-       pval=pval+sum(1/real.CV>=exp.null.dist.CV)/resolution
-     } else {
-         pval=under.p
-         pval=pval+sum(1/real.CV<=exp.null.dist.CV)/resolution
-       }
-     test.type='two-tailed'
-   }
-   result=list(real.CV=real.CV,p.value=pval,test.type=test.type)
-   return(result)
-}
-
-```
-
-```{r}
-# Apply the function to datasets
-
-wt_off_CV_test <- test.CV(wt_off_expand, dist.tail = 0)  # Two-tailed test for WT Off
-sna_off_CV_test <- test.CV(sna_off_expand, dist.tail = 0)  # Two-tailed test for Sna Off
-
-# Print the results
-cat("\nWT Off Test:\n")
-print(wt_off_CV_test)
-
-cat("\nSna Off Test:\n")
-print(sna_off_CV_test)
 ```
 
 Skewness Test
@@ -164,4 +126,195 @@ off_skew_test <- compare.skewness(sna_off_expand, wt_off_expand, dist.tail = 1)
 cat("\nSkewness Comparison for 'Off' State (Sna vs WT):\n")
 print(off_skew_test)
 
+```
+
+Bayesian grid approximation
+
+```{r Bayesian}
+# This generates all densities for the durations for probabilities from .001 to .999
+# It returns a 2D matrix with the each duration being a column and each probability being a row
+all.densities=sapply(0:29,dgeom,prob=seq(0.001,.999,by=.001),log=T,simplify=T)
+# 
+binSize=0.001
+probabilities=seq(binSize,1-binSize,by=binSize)
+prior=numeric(length(probabilities))+binSize # uniform=beta(1,1)
+
+# The least complicated way to do this is to break it into the different groups and then assemble everything afterwards
+# The log likelihood of a dataset is just the sum of the log-likelihoods of all the datapoints for a given probability
+analysis=NULL
+
+for (st in c('off','on')){
+  for (g in c('WT','Sna')){
+    sub.dat=raw.dat %>% filter(State==st,Genotype==g) %>% mutate(x=Duration-1) %>% pull(x)
+    # sapply with simplify =T makes and arraw with the datapoints across the columns and the probabilities in rows.  Want to sum for each row to get the total log likelihood of the data for a given prob.
+    LLs= sapply(sub.dat,dgeom,prob=probabilities,log=T,simplify=T) %>% rowSums()
+    # we can arbitrarily add/subtract a number in log space without changing anything.  subtracting the max helps with numerical stability
+    LLs=LLs-max(LLs) 
+    log.unNormalizedPosterior=LLs+prior
+    unNormalizedPosterior=exp(log.unNormalizedPosterior)
+    posterior=unNormalizedPosterior/sum(unNormalizedPosterior)
+    analysis %<>% bind_rows(tibble(p=probabilities,State=st,Genotype=g,LL=LLs,unNormalizedPost=unNormalizedPosterior,post=posterior,dens=posterior/binSize))
+  }
+}
+```
+
+```{r Expected counts and statistics}
+# Compute expected statistics given p
+expected.statistics=tibble(p=probabilities) %>% mutate(skew.theory=(2-p)/sqrt(1-p),CV.theory=sqrt(1-p))
+
+
+# N for each dataset
+Ns=raw.dat %>% count(State,Genotype)
+
+#Expected Counts - make a tibble with the expected counts at each Duration for each value of p (possible probability parameter for the geometric)   
+expectedAtDurations=sapply(0:29,dgeom,prob=probabilities,log=T,simplify=T) %>% as_tibble() %>% mutate(p=probabilities) %>% pivot_longer(V1:V30, names_to='Duration',values_to='LL') %>% mutate(Duration=as.numeric(str_replace(Duration,'V','')))
+expectedCounts=expectedAtDurations %>% crossing(Ns)%>% arrange(State,Genotype) %>% mutate(LC=LL+log(n),ExpCount=exp(LC))
+
+# Now weight the expected values by the posterior probability for each p to get the posteriors for the counts and statistics
+
+
+expected.statistics %<>% right_join(analysis %>% select(p,State,Genotype,post,dens),by='p')
+
+expectedCounts%<>% right_join(analysis %>% select(p,State,Genotype,post,dens),by=c('p','State','Genotype'))
+
+# for plotting convenience, filter out posterior probabilities less than some value
+post.cutoff=.0000001
+expected.statistics %<>% filter(post>post.cutoff)
+expectedCounts %<>% filter(post>post.cutoff)
+
+# Pivot longer for plotting convenience
+expected.statistics %<>% pivot_longer(skew.theory:CV.theory,names_to='stat',values_to='value') %>% mutate(stat=str_replace(stat,'.theory','')) 
+
+```
+
+```{r Plot_data_with_HDI_intervals}
+# Plot the data with HDI intervals as error bars and the median of the posterior marked with a dot
+
+#1) Generate posteriors for the counts at each duration for the 4 groups [up to 30 minutes]
+#2) Estimate HDI for each of them
+#3) Estimate Median for each of them
+#4) Make the base plot and add these in keeping in mind the log transformation
+
+#1 Get posteriors
+maxTime=30# imaged for 30 minutes
+times=1:maxTime
+count.of.one.at=log10(2)# have bars with a count of 1 at a height of this
+# What is the maximum duration for each group?
+
+
+#2,3 Estimate HDIs & median
+# Do this by sampling
+hdis.expectedCounts=expectedCounts %>% ddply(.,.(State,Genotype,Duration),function(x){
+    draws=sample(x$ExpCount,100000,replace=T,prob=x$post)
+  hd=hdi(draws,credMass=0.95)
+  temp=tibble(State=x$State[1],Genotype=x$Genotype[1],Duration=x$Duration[1],lower=hd[1],upper=hd[2],med=median(draws))
+  temp %<>% rowwise() %>% mutate(log10.med=log10(round(med)),
+                                              log10.lower=log10(round(lower)),
+                                              log10.upper=log10(round(upper))) %>%
+  mutate(log10.med=if_else(is.infinite(log10.med),0,log10.med+count.of.one.at),
+         log10.lower=if_else(is.infinite(log10.lower),0,log10.lower+count.of.one.at),
+         log10.upper=if_else(is.infinite(log10.upper),0,log10.upper+count.of.one.at))
+
+
+  return(temp)
+}) %>% as_tibble()
+  
+  
+dataWithTheoreticalCounts=dat %>% left_join(hdis.expectedCounts,by=c('Duration','State','Genotype'))
+# add the actual log10 counts
+# Add log10 counts to data
+dataWithTheoreticalCounts %<>% mutate(log10.Count=if_else(Counts<=0,0,count.of.one.at+log10(Counts)))
+
+
+# Set a maximum duration for plotting for the groups and filter the data beyond that
+maxDurForPlotting=dataWithTheoreticalCounts %>% filter(upper>=.5 | Counts>=.5) %>% group_by(State,Genotype) %>% slice_tail() %>% select(State,Genotype,Duration) %>% rename(maxDur=Duration)
+
+hdis.expectedCounts %<>% left_join(maxDurForPlotting,by=c('State','Genotype')) %>% filter(Duration<=maxDur) %>% select(-maxDur)
+
+dataWithTheoreticalCounts %<>% left_join(maxDurForPlotting,by=c('State','Genotype')) %>% filter(Duration<=maxDur) %>% select(-maxDur)
+
+# Adjust data so that a count of 1 goes to count.of.one.at in the log.Counts
+
+
+#4 Plot
+# Calculate y.tick.intervals
+max.count=dataWithTheoreticalCounts %>% ungroup() %>% pivot_longer(starts_with('log10.'),names_to='typ',values_to='cnt') %>% pull(cnt) %>% max(.)
+max.y.axis=ceiling(max.count)
+yticks=0
+yticklabels=0
+for (power.10 in 0:max.y.axis){ # this is the log10
+  for (tick.increment in 1:9){
+    yticks=c(yticks,count.of.one.at+log10(tick.increment*(10^power.10)))
+    if (tick.increment %in% c(1,3)){
+      yticklabels=c(yticklabels,tick.increment*(10^power.10))
+    } else {
+      yticklabels=c(yticklabels,'')
+    }
+  }
+}
+
+# Adjusting plot order
+dataWithTheoreticalCounts$Genotype <- factor(dataWithTheoreticalCounts$Genotype, levels = c("WT", "Sna"))
+dataWithTheoreticalCounts$State <- factor(dataWithTheoreticalCounts$State, levels = c("on", "off"))
+
+hdis.expectedCounts$Genotype <- factor(hdis.expectedCounts$Genotype, levels = c("WT", "Sna"))
+hdis.expectedCounts$State <- factor(hdis.expectedCounts$State, levels = c("on", "off"))
+```
+
+```{r Display_plots}
+#make sure the x labels are at the right side of the bins
+plotDataAndGeometricModel<-function(datToPlot,y.tick.locations,y.tick.labels){
+  
+  plt=ggplot(datToPlot)
+  plt=plt+geom_hline(aes(yintercept=count.of.one.at),color='grey75', linewidth=0.1)
+  plt=plt+geom_hline(aes(yintercept=0),color='grey75', linewidth=0.1)
+  plt=plt+geom_col(aes(x=Duration,y=log10.Count,fill=interaction(State,Genotype)),color='grey50',linewidth=0.25,width=.75)
+  plt=plt+scale_y_continuous(name='Count',breaks=y.tick.locations,labels=y.tick.labels,limits=c(0,max.y.axis))
+  plt=plt+theme_bw()+theme(panel.grid.major.x = element_blank(),panel.grid.minor.x=element_blank(),panel.grid.minor.y=element_blank(),panel.grid.major.y = element_line(size = 0.1, color = "grey80"))
+  plt=plt+facet_grid(Genotype~State, labeller =    labeller(State = c("off" = "Duration OFF", "on" = "Duration ON")))
+  plt=plt+scale_fill_manual(guide=NULL,values=c('#00AEEF','#99DFF9','#FBB040','#FDD08C')) 
+  plt=plt+xlab('Minutes until a state change')
+  return(plt)
+}
+
+# Make the plot
+base.plot=plotDataAndGeometricModel(dataWithTheoreticalCounts,yticks,yticklabels)
+full.plot=base.plot+geom_linerange(data=hdis.expectedCounts,aes(x=Duration,ymin=log10.lower,ymax=log10.upper),color='black', linewidth=.1)+ geom_point(data = hdis.expectedCounts, aes(x = Duration, y = log10.med), fill = 'grey75', color = 'black', shape = 21, size = 1, stroke = 0.2)
+
+base.plot
+full.plot
+```
+
+```{r posterior_predictive_checks}
+# Simulate 10000 datasets from the posterior 
+nSims=10000
+
+discrepancies=expected.statistics%>% left_join(Ns,by=c('State','Genotype')) %>% ddply(.,c('State','Genotype'),function(subdat){
+  
+  simPs=tibble(p=sample(subdat$p,size=nSims,replace=T,prob=subdat$post)) %>% mutate(iRow=row_number())
+  
+  simCounts=simPs %>% mutate(
+    draws=map(p,~rgeom(subdat$n[1],prob=.x)+1),
+    counts=map(draws,~tibble(Duration=1:30,simCount=tabulate(.x,nbins=30)
+  ))) %>%  select(p,counts,iRow) %>% unnest(counts)
+  
+  # Combine with expectedCounts
+  simCounts %<>% left_join(expectedCounts %>% filter(State==subdat$State[1],Genotype==subdat$Genotype[1]) %>% select(p,Duration,ExpCount),by=c('p','Duration'))
+  
+    # merge in the actual discrepancies
+  actualCounts=tibble(Duration=1:30,actualCount=tabulate(raw.dat %>% filter(State==subdat$State[1],Genotype==subdat$Genotype[1]) %>% pull(Duration),nbins=30))
+  simCounts %<>% left_join(actualCounts,by='Duration')
+  
+  
+  # Calculate the discrepancies.  Group by p
+  discrepancyDistribution=simCounts %>% mutate(sim.deviations=((simCount-ExpCount)^2)/ExpCount, actual.deviations=((actualCount-ExpCount)^2)/ExpCount) %>% group_by(iRow) %>% summarize(sim.chisq=sum(sim.deviations),actual.chisq=sum(actual.deviations)) %>% mutate(sim.gt.actual=sim.chisq>actual.chisq) %>% select(-iRow) %>% mutate(State=subdat$State[1],Genotype=subdat$Genotype[1])
+  
+  return(discrepancyDistribution)
+  
+}) %>% as_tibble()
+
+PostPredCheck=discrepancies %>% group_by(State,Genotype) %>% summarize(PostPredPvalue=mean(sim.gt.actual)) # chisq, just looking at greater.
+
+PostPredCheck
+save(list = c('discrepancies','PostPredCheck'),file='postPredDiscrepancyCheck.Rdata')
 ```
