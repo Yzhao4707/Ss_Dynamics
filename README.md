@@ -1,5 +1,5 @@
 # Ss_Dynamics
-Repository for code used in data analysis for Fig.4D. Huge thanks to Scott Rifkins in helping us out on this!
+Repository for code used in data analysis for Fig.4D. Huge thanks to Scott Rifkins for helping us out on this!
 
 ---
 
@@ -7,8 +7,8 @@ Repository for code used in data analysis for Fig.4D. Huge thanks to Scott Rifki
 
 #This compares two distributions and asks whether one has more positive skew than the other
 #The test statistic is the difference in skewness
-#The null hypothesis is that the distributions the same and so the difference in skewness is 0
-#So the null distribution is constructed by randomizing which datapoint belongs to which distribution.  Then taking the test statistic for this randomized dataset.  Then do this 10000 (resolution) times to get a null distribution 
+#The null hypothesis is that the distributions are the same, and the difference in skewness is 0
+#The null distribution is constructed by randomizing which datapoint belongs to which distribution.  Then taking the test statistic for this randomized dataset.  Then do this 10000 (resolution) times to get a null distribution 
 
 
 ---
@@ -17,7 +17,7 @@ If spineless transcription is a Poisson process in the cell (memoryless), then t
 
 Consider changing state a "success". Then the number of minutes in the same state is the number of "failures" until a success. This is a standard setup for a geometric distribution.
 
-So with a single probability (p), prob(T=k)=((1-p)^(k-1))*p = k-1 minutes with no change (at probability 1-p per minute) with the last minute being a change and the first minute setting the state
+With a single probability (p), prob(T=k)=((1-p)^(k-1))*p = k-1 minutes with no change (at probability 1-p per minute) with the last minute being a change and the first minute setting the state
 
 For example, if a cell is OFF at k=1 and ON at k=2, then prob(T=k)=p. It changed on its 1st opportunity
 
@@ -36,7 +36,7 @@ Approach:
 
 #5) For a geometric distribution, the coefficient of variation, skew, can be derived directly from p Use a Bayesian approach to estimate the rate and then output the posterior distributions for the skew and CV for the geometric models estimated from the data. Then see whether the actual data is consistent with that.
 
-Since the model is a simple one parameter geometric model, we can just scan through probabilities from 0 to 1 [grid approximation], and get the densities from x=0:29 (note that the r geom functions (dgeom, rgeom, etc) are p(1-p)^x. To match with the data collection, we'd want to use duration=x+1.
+Since the model is a simple one-parameter geometric model, we can scan through probabilities from 0 to 1 [grid approximation], and get the densities from x=0:29 (note that the r geom functions (dgeom, rgeom, etc) are p(1-p)^x. To match the data collection, we'd want to use duration=x+1.
 
 ## plotDataAndGeometricModel
 Plot the data with HDI intervals as error bars and the median of the posterior marked with a dot
